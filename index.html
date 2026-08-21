@@ -1,0 +1,904 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TLS Certificate Decoder // cert-decoder.slippylabs.com</title>
+<meta name="description" content="Decode an X.509 / TLS certificate or a whole chain — subject, SANs, issuer, validity, key type, extensions and fingerprints. Hand-written DER parser, nothing leaves your browser.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://cert-decoder.slippylabs.com/">
+<meta property="og:title" content="TLS Certificate Decoder // cert-decoder.slippylabs.com">
+<meta property="og:description" content="Decode an X.509 / TLS certificate or a whole chain — subject, SANs, issuer, validity, key type, extensions and fingerprints. Hand-written DER parser, nothing leaves your browser.">
+<meta property="og:image" content="https://cert-decoder.slippylabs.com/og-image.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="TLS Certificate Decoder // cert-decoder.slippylabs.com">
+<meta name="twitter:description" content="Decode an X.509 / TLS certificate or a whole chain — subject, SANs, issuer, validity, key type, extensions and fingerprints. Hand-written DER parser, nothing leaves your browser.">
+<meta name="twitter:image" content="https://cert-decoder.slippylabs.com/og-image.png">
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Ccircle%20cx%3D%2232%22%20cy%3D%2234%22%20r%3D%2222%22%20fill%3D%22%231c8a52%22%20stroke%3D%22%2339ff8f%22%20stroke-width%3D%222%22%2F%3E%3Ccircle%20cx%3D%2220%22%20cy%3D%2216%22%20r%3D%228%22%20fill%3D%22%231c8a52%22%20stroke%3D%22%2339ff8f%22%20stroke-width%3D%222%22%2F%3E%3Ccircle%20cx%3D%2244%22%20cy%3D%2216%22%20r%3D%228%22%20fill%3D%22%231c8a52%22%20stroke%3D%22%2339ff8f%22%20stroke-width%3D%222%22%2F%3E%3C%2Fsvg%3E">
+<meta name="theme-color" content="#050b10">
+<link rel="stylesheet" href="style.css?v=1">
+<script>/* perf-lite: drop blend/blur effects on low-power devices. ?fx=lite or ?fx=full to override (persisted). */
+(function(){try{var k="slippy-fx",m=location.search.match(/[?&]fx=(lite|full)/),v=m?m[1]:localStorage.getItem(k);if(m)localStorage.setItem(k,v);if(v==="lite"||(v!=="full"&&(navigator.hardwareConcurrency||8)<=2))document.documentElement.classList.add("perf-lite");}catch(e){}})();</script>
+</head>
+<body>
+
+<div class="starfield"></div>
+<div class="scanlines"></div>
+
+<main class="page-wrap">
+  <div class="hud-panel wide">
+    <div class="corner tl"></div>
+    <div class="corner tr"></div>
+    <div class="corner bl"></div>
+    <div class="corner br"></div>
+
+    <div class="callsign-row">
+      <div class="toad-avatar-wrap">
+        <svg class="toad-avatar" width="46" height="46" viewBox="0 0 64 64">
+          <circle cx="32" cy="34" r="22" fill="#1c8a52" stroke="#39ff8f" stroke-width="2"/>
+          <circle cx="20" cy="16" r="8" fill="#1c8a52" stroke="#39ff8f" stroke-width="2"/>
+          <circle cx="44" cy="16" r="8" fill="#1c8a52" stroke="#39ff8f" stroke-width="2"/>
+          <circle cx="20" cy="16" r="3.5" fill="#050b10"/>
+          <circle cx="44" cy="16" r="3.5" fill="#050b10"/>
+          <ellipse cx="24" cy="32" rx="4.5" ry="5.5" fill="#050b10"/>
+          <ellipse cx="40" cy="32" rx="4.5" ry="5.5" fill="#050b10"/>
+          <circle cx="24" cy="30" r="1.4" fill="#39ff8f"/>
+          <circle cx="40" cy="30" r="1.4" fill="#39ff8f"/>
+          <path d="M22 42 Q32 48 42 42" stroke="#050b10" stroke-width="2" fill="none" stroke-linecap="round"/>
+        </svg>
+        <div class="lock-reticle"></div>
+      </div>
+      <span class="callsign">Workshop Division // Tool</span>
+      <div class="nav-links">
+        <a href="https://projects.slippylabs.com/" class="logout-link">← Archive</a>
+      </div>
+    </div>
+
+    <h1>TLS CERTIFICATE DECODER</h1>
+    <p class="subtitle">Paste a PEM certificate, a full chain, or drop a .pem/.crt/.cer/.der file. The ASN.1 is parsed here in the page — a private key or an internal hostname never leaves the machine.</p>
+
+    <div class="tool-field-row">
+      <label class="tool-field-label" for="pem-input">Certificate (PEM) or chain</label>
+      <textarea class="tool-textarea" id="pem-input" rows="8" spellcheck="false"
+                autocapitalize="off" autocomplete="off"
+                placeholder="-----BEGIN CERTIFICATE-----&#10;MIIF...&#10;-----END CERTIFICATE-----"></textarea>
+    </div>
+
+    <div class="tool-controls">
+      <input type="file" class="tool-file-input" id="file-input"
+             accept=".pem,.crt,.cer,.der,.txt,application/x-x509-ca-cert">
+      <button class="tool-btn" id="sample-btn">Load Sample</button>
+      <button class="tool-btn ghost" id="clear-btn">Clear</button>
+    </div>
+
+    <p class="tool-note" id="parse-error" role="alert"></p>
+    <p class="tool-note" id="chain-summary"></p>
+    <div id="cert-output"></div>
+
+    <p class="tool-note">
+      Decoding only — this reads what the certificate says about itself. It does not verify the
+      signature against the issuer's key or check revocation, so a self-signed certificate
+      claiming to be a well-known CA will still be shown as it is written.
+    </p>
+
+    <div class="comm-window">
+      <div class="comm-portrait">
+        <svg width="36" height="36" viewBox="0 0 64 64">
+          <circle cx="32" cy="34" r="22" fill="#1c8a52" stroke="#39ff8f" stroke-width="2"/>
+          <circle cx="20" cy="16" r="8" fill="#1c8a52" stroke="#39ff8f" stroke-width="2"/>
+          <circle cx="44" cy="16" r="8" fill="#1c8a52" stroke="#39ff8f" stroke-width="2"/>
+          <circle cx="20" cy="16" r="3.5" fill="#050b10"/>
+          <circle cx="44" cy="16" r="3.5" fill="#050b10"/>
+          <ellipse cx="24" cy="32" rx="4.5" ry="5.5" fill="#050b10"/>
+          <ellipse cx="40" cy="32" rx="4.5" ry="5.5" fill="#050b10"/>
+          <circle cx="24" cy="30" r="1.4" fill="#39ff8f"/>
+          <circle cx="40" cy="30" r="1.4" fill="#39ff8f"/>
+          <path d="M22 42 Q32 48 42 42" stroke="#050b10" stroke-width="2" fill="none" stroke-linecap="round"/>
+        </svg>
+      </div>
+      <div class="comm-body">
+        <div class="comm-label"><span class="dot"></span> Incoming Transmission &mdash; Slippy</div>
+        <p>&quot;A cert is just a signed pile of ASN.1. Nice to be able to read the pile.&quot;</p>
+      </div>
+    </div>
+
+    <a href="https://projects.slippylabs.com/" class="hud-btn">← Back to Archive</a>
+  </div>
+</main>
+
+<script>
+/* ---- X.509 / DER core -------------------------------------------------------
+   A hand-written ASN.1 DER reader and just enough of RFC 5280 to describe a
+   certificate. Nothing above the UI marker touches the DOM; verify_cert.py
+   diffs every field of it against Python's `cryptography` and against
+   `openssl x509 -text`. */
+
+function derRead(bytes, offset) {
+  if (offset + 2 > bytes.length) throw new Error('truncated DER at offset ' + offset);
+  const first = bytes[offset];
+  const cls = first >> 6;                 // 0 universal, 2 context-specific
+  const constructed = (first & 0x20) !== 0;
+  let tag = first & 0x1f;
+  let pos = offset + 1;
+  if (tag === 0x1f) {
+    // High-tag-number form: base-128, continuation bit in the top bit.
+    tag = 0;
+    let b;
+    do {
+      if (pos >= bytes.length) throw new Error('truncated high tag number');
+      b = bytes[pos++];
+      tag = (tag << 7) | (b & 0x7f);
+    } while (b & 0x80);
+  }
+
+  let length = bytes[pos++];
+  if (length === 0x80) throw new Error('indefinite-length encoding is not valid DER');
+  if (length & 0x80) {
+    const count = length & 0x7f;
+    if (count > 4) throw new Error('length field too large');
+    length = 0;
+    for (let i = 0; i < count; i++) {
+      if (pos >= bytes.length) throw new Error('truncated length field');
+      length = (length << 8) | bytes[pos++];
+    }
+  }
+  const valueStart = pos;
+  const valueEnd = pos + length;
+  if (valueEnd > bytes.length) {
+    throw new Error('element runs past the end of the data (offset ' + offset + ')');
+  }
+  return { tag, cls, constructed, start: offset, valueStart, valueEnd, end: valueEnd, length };
+}
+
+/* Every direct child of a constructed element, in order. */
+function derChildren(bytes, node) {
+  const out = [];
+  let pos = node.valueStart;
+  while (pos < node.valueEnd) {
+    const child = derRead(bytes, pos);
+    out.push(child);
+    pos = child.end;
+  }
+  return out;
+}
+
+function derValue(bytes, node) { return bytes.subarray(node.valueStart, node.valueEnd); }
+
+function bytesToHex(bytes, separator) {
+  const parts = [];
+  for (let i = 0; i < bytes.length; i++) parts.push(bytes[i].toString(16).padStart(2, '0'));
+  return parts.join(separator === undefined ? '' : separator);
+}
+
+function bytesToBigInt(bytes) {
+  let value = 0n;
+  for (let i = 0; i < bytes.length; i++) value = (value << 8n) | BigInt(bytes[i]);
+  return value;
+}
+
+/* An INTEGER is two's complement, so a leading 1 bit means negative. Serial
+   numbers are supposed to be positive but some real certificates get this
+   wrong, and openssl prints those with a leading minus. */
+function readInteger(bytes, node) {
+  const raw = derValue(bytes, node);
+  if (raw.length === 0) return { value: 0n, hex: '00', negative: false };
+  const negative = (raw[0] & 0x80) !== 0;
+  let value = bytesToBigInt(raw);
+  if (negative) value -= 1n << BigInt(raw.length * 8);
+  // Strip the leading 0x00 DER adds to keep a big number positive.
+  let hexBytes = raw;
+  if (raw.length > 1 && raw[0] === 0x00) hexBytes = raw.subarray(1);
+  return { value, hex: bytesToHex(hexBytes), negative, byteLength: hexBytes.length };
+}
+
+function readOID(bytes, node) {
+  const raw = derValue(bytes, node);
+  if (!raw.length) return '';
+  const parts = [];
+  // The first byte packs the first two arcs: 40*a + b.
+  parts.push(Math.floor(raw[0] / 40), raw[0] % 40);
+  let value = 0n;
+  let started = false;
+  for (let i = 1; i < raw.length; i++) {
+    value = (value << 7n) | BigInt(raw[i] & 0x7f);
+    started = true;
+    if (!(raw[i] & 0x80)) {
+      parts.push(value.toString());
+      value = 0n;
+      started = false;
+    }
+  }
+  if (started) throw new Error('OID ends mid-arc');
+  return parts.join('.');
+}
+
+/* DER strings come in several flavours; UTF8String and the ASCII-ish types are
+   decoded as UTF-8, and BMPString is UTF-16BE. */
+function readString(bytes, node) {
+  const raw = derValue(bytes, node);
+  if (node.tag === 30) {                       // BMPString
+    let out = '';
+    for (let i = 0; i + 1 < raw.length; i += 2) out += String.fromCharCode((raw[i] << 8) | raw[i + 1]);
+    return out;
+  }
+  if (node.tag === 28) {                       // UniversalString (UCS-4)
+    let out = '';
+    for (let i = 0; i + 3 < raw.length; i += 4) {
+      out += String.fromCodePoint((raw[i] << 24) | (raw[i + 1] << 16) | (raw[i + 2] << 8) | raw[i + 3]);
+    }
+    return out;
+  }
+  return new TextDecoder('utf-8').decode(raw);
+}
+
+/* UTCTime is YYMMDDHHMMSSZ with a 50-year pivot; GeneralizedTime is the same
+   with a four-digit year. Both are returned as an epoch-millisecond number so
+   the page can do arithmetic on them. */
+function readTime(bytes, node) {
+  const text = new TextDecoder('ascii').decode(derValue(bytes, node)).trim();
+  let year, rest;
+  if (node.tag === 23) {                       // UTCTime
+    const yy = parseInt(text.slice(0, 2), 10);
+    year = yy < 50 ? 2000 + yy : 1900 + yy;
+    rest = text.slice(2);
+  } else if (node.tag === 24) {                // GeneralizedTime
+    year = parseInt(text.slice(0, 4), 10);
+    rest = text.slice(4);
+  } else {
+    throw new Error('unexpected time type (tag ' + node.tag + ')');
+  }
+  const month = parseInt(rest.slice(0, 2), 10);
+  const day = parseInt(rest.slice(2, 4), 10);
+  const hour = parseInt(rest.slice(4, 6), 10);
+  const minute = parseInt(rest.slice(6, 8), 10);
+  const secondText = rest.slice(8, 10);
+  const second = /^\d\d$/.test(secondText) ? parseInt(secondText, 10) : 0;
+  if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) {
+    throw new Error('unparseable time: ' + text);
+  }
+  return { epoch: Date.UTC(year, month - 1, day, hour, minute, second), text };
+}
+
+const OID_NAMES = {
+  // Distinguished-name attributes
+  '2.5.4.3': 'CN', '2.5.4.6': 'C', '2.5.4.7': 'L', '2.5.4.8': 'ST',
+  '2.5.4.10': 'O', '2.5.4.11': 'OU', '2.5.4.4': 'SN', '2.5.4.42': 'GN',
+  '2.5.4.5': 'serialNumber', '2.5.4.9': 'street', '2.5.4.12': 'title',
+  '2.5.4.15': 'businessCategory', '2.5.4.17': 'postalCode',
+  '2.5.4.97': 'organizationIdentifier',
+  '1.2.840.113549.1.9.1': 'emailAddress',
+  '0.9.2342.19200300.100.1.25': 'DC', '0.9.2342.19200300.100.1.1': 'UID',
+  '1.3.6.1.4.1.311.60.2.1.3': 'jurisdictionC',
+  '1.3.6.1.4.1.311.60.2.1.2': 'jurisdictionST',
+  // Signature and key algorithms
+  '1.2.840.113549.1.1.1': 'RSA',
+  '1.2.840.113549.1.1.5': 'sha1WithRSAEncryption',
+  '1.2.840.113549.1.1.10': 'RSASSA-PSS',
+  '1.2.840.113549.1.1.11': 'sha256WithRSAEncryption',
+  '1.2.840.113549.1.1.12': 'sha384WithRSAEncryption',
+  '1.2.840.113549.1.1.13': 'sha512WithRSAEncryption',
+  '1.2.840.10040.4.1': 'DSA',
+  '1.2.840.10040.4.3': 'dsaWithSHA1',
+  '1.2.840.10045.2.1': 'EC',
+  '1.2.840.10045.4.1': 'ecdsaWithSHA1',
+  '1.2.840.10045.4.3.2': 'ecdsaWithSHA256',
+  '1.2.840.10045.4.3.3': 'ecdsaWithSHA384',
+  '1.2.840.10045.4.3.4': 'ecdsaWithSHA512',
+  '1.3.101.112': 'Ed25519', '1.3.101.113': 'Ed448',
+  // Named curves
+  '1.2.840.10045.3.1.7': 'prime256v1 (P-256)',
+  '1.3.132.0.34': 'secp384r1 (P-384)',
+  '1.3.132.0.35': 'secp521r1 (P-521)',
+  '1.3.132.0.10': 'secp256k1',
+  // Extended key usage
+  '1.3.6.1.5.5.7.3.1': 'TLS Web Server Authentication',
+  '1.3.6.1.5.5.7.3.2': 'TLS Web Client Authentication',
+  '1.3.6.1.5.5.7.3.3': 'Code Signing',
+  '1.3.6.1.5.5.7.3.4': 'E-mail Protection',
+  '1.3.6.1.5.5.7.3.8': 'Time Stamping',
+  '1.3.6.1.5.5.7.3.9': 'OCSP Signing',
+  // Access methods
+  '1.3.6.1.5.5.7.48.1': 'OCSP', '1.3.6.1.5.5.7.48.2': 'CA Issuers',
+};
+
+const CURVE_BITS = {
+  '1.2.840.10045.3.1.7': 256, '1.3.132.0.34': 384, '1.3.132.0.35': 521,
+  '1.3.132.0.10': 256,
+};
+
+const EXT_NAMES = {
+  '2.5.29.14': 'Subject Key Identifier',
+  '2.5.29.15': 'Key Usage',
+  '2.5.29.16': 'Private Key Usage Period',
+  '2.5.29.17': 'Subject Alternative Name',
+  '2.5.29.18': 'Issuer Alternative Name',
+  '2.5.29.19': 'Basic Constraints',
+  '2.5.29.30': 'Name Constraints',
+  '2.5.29.31': 'CRL Distribution Points',
+  '2.5.29.32': 'Certificate Policies',
+  '2.5.29.35': 'Authority Key Identifier',
+  '2.5.29.37': 'Extended Key Usage',
+  '1.3.6.1.5.5.7.1.1': 'Authority Information Access',
+  '1.3.6.1.4.1.11129.2.4.2': 'Signed Certificate Timestamps',
+  '2.5.29.9': 'Subject Directory Attributes',
+  '1.3.6.1.5.5.7.1.24': 'TLS Feature (OCSP Must-Staple)',
+};
+
+const KEY_USAGE_BITS = [
+  'Digital Signature', 'Non Repudiation', 'Key Encipherment', 'Data Encipherment',
+  'Key Agreement', 'Certificate Sign', 'CRL Sign', 'Encipher Only', 'Decipher Only',
+];
+
+function oidLabel(oid) { return OID_NAMES[oid] || oid; }
+
+/* Name ::= RDNSequence. Rendered issuer-last-first the way openssl prints it,
+   and also returned as the raw DER so two names can be compared exactly. */
+function readName(bytes, node) {
+  const attributes = [];
+  for (const rdn of derChildren(bytes, node)) {
+    for (const pair of derChildren(bytes, rdn)) {
+      const [typeNode, valueNode] = derChildren(bytes, pair);
+      const oid = readOID(bytes, typeNode);
+      let value;
+      try {
+        value = readString(bytes, valueNode);
+      } catch (err) {
+        value = '0x' + bytesToHex(derValue(bytes, valueNode));
+      }
+      attributes.push({ oid, name: oidLabel(oid), value });
+    }
+  }
+  return {
+    attributes,
+    text: attributes.map((a) => a.name + '=' + a.value).join(', '),
+    der: bytesToHex(bytes.subarray(node.start, node.end)),
+  };
+}
+
+function readAlgorithm(bytes, node) {
+  const children = derChildren(bytes, node);
+  const oid = readOID(bytes, children[0]);
+  const result = { oid, name: oidLabel(oid) };
+  if (children[1] && children[1].tag === 6) {
+    result.paramOID = readOID(bytes, children[1]);
+    result.paramName = oidLabel(result.paramOID);
+  }
+  return result;
+}
+
+/* GeneralName ::= CHOICE, all context-specific tags. */
+function readGeneralName(bytes, node) {
+  switch (node.tag) {
+    case 1: return { kind: 'email', value: new TextDecoder().decode(derValue(bytes, node)) };
+    case 2: return { kind: 'DNS', value: new TextDecoder().decode(derValue(bytes, node)) };
+    case 6: return { kind: 'URI', value: new TextDecoder().decode(derValue(bytes, node)) };
+    case 7: {
+      const raw = derValue(bytes, node);
+      // 4 bytes is an IPv4 address, 16 an IPv6 one; 8/32 are address+mask
+      // pairs, which only appear inside a name constraint.
+      if (raw.length === 4) return { kind: 'IP', value: Array.from(raw).join('.') };
+      if (raw.length === 16) {
+        const groups = [];
+        for (let i = 0; i < 16; i += 2) groups.push(((raw[i] << 8) | raw[i + 1]).toString(16));
+        return { kind: 'IP', value: compressIPv6Groups(groups) };
+      }
+      return { kind: 'IP', value: '0x' + bytesToHex(raw) };
+    }
+    case 4: {
+      const inner = derChildren(bytes, node)[0];
+      return { kind: 'DirName', value: readName(bytes, inner).text };
+    }
+    case 8: return { kind: 'RegisteredID', value: readOID(bytes, node) };
+    case 0: return { kind: 'otherName', value: '0x' + bytesToHex(derValue(bytes, node)) };
+    default: return { kind: 'tag ' + node.tag, value: '0x' + bytesToHex(derValue(bytes, node)) };
+  }
+}
+
+function compressIPv6Groups(groups) {
+  let bestStart = -1, bestLen = 0, start = -1, len = 0;
+  for (let i = 0; i < groups.length; i++) {
+    if (groups[i] === '0') {
+      if (start === -1) { start = i; len = 1; } else { len++; }
+      if (len > bestLen) { bestLen = len; bestStart = start; }
+    } else { start = -1; len = 0; }
+  }
+  if (bestLen < 2) return groups.join(':');
+  return groups.slice(0, bestStart).join(':') + '::' + groups.slice(bestStart + bestLen).join(':');
+}
+
+function decodeExtension(bytes, oid, valueBytes) {
+  const value = valueBytes;
+  const root = derRead(value, 0);
+  switch (oid) {
+    case '2.5.29.17':
+    case '2.5.29.18': {
+      const names = derChildren(value, root).map((n) => readGeneralName(value, n));
+      return { kind: 'names', names, summary: names.map((n) => n.kind + ':' + n.value).join(', ') };
+    }
+    case '2.5.29.19': {
+      const children = derChildren(value, root);
+      let ca = false, pathLen = null;
+      for (const child of children) {
+        if (child.tag === 1) ca = derValue(value, child)[0] !== 0;
+        else if (child.tag === 2) pathLen = Number(readInteger(value, child).value);
+      }
+      return {
+        kind: 'basicConstraints', ca, pathLen,
+        summary: 'CA:' + (ca ? 'TRUE' : 'FALSE') + (pathLen === null ? '' : ', pathlen:' + pathLen),
+      };
+    }
+    case '2.5.29.15': {
+      const raw = derValue(value, root);
+      const unused = raw[0];
+      const usages = [];
+      const bitCount = (raw.length - 1) * 8 - unused;
+      for (let i = 0; i < bitCount && i < KEY_USAGE_BITS.length; i++) {
+        const byte = raw[1 + (i >> 3)];
+        if (byte & (0x80 >> (i & 7))) usages.push(KEY_USAGE_BITS[i]);
+      }
+      return { kind: 'keyUsage', usages, summary: usages.join(', ') };
+    }
+    case '2.5.29.37': {
+      const oids = derChildren(value, root).map((n) => readOID(value, n));
+      return { kind: 'ekus', oids, summary: oids.map(oidLabel).join(', ') };
+    }
+    case '2.5.29.14':
+      return { kind: 'keyid', summary: bytesToHex(derValue(value, root), ':').toUpperCase() };
+    case '2.5.29.35': {
+      const parts = [];
+      for (const child of derChildren(value, root)) {
+        if (child.tag === 0) {
+          parts.push('keyid:' + bytesToHex(derValue(value, child), ':').toUpperCase());
+        } else if (child.tag === 2) {
+          parts.push('serial:' + readInteger(value, child).hex.toUpperCase());
+        }
+      }
+      return { kind: 'akid', summary: parts.join('  ') };
+    }
+    case '1.3.6.1.5.5.7.1.1': {
+      const parts = [];
+      for (const desc of derChildren(value, root)) {
+        const [methodNode, locationNode] = derChildren(value, desc);
+        const method = oidLabel(readOID(value, methodNode));
+        parts.push(method + ' - ' + readGeneralName(value, locationNode).value);
+      }
+      return { kind: 'aia', summary: parts.join('\n') };
+    }
+    case '2.5.29.31': {
+      const urls = [];
+      const walk = (node) => {
+        for (const child of derChildren(value, node)) {
+          if (child.tag === 6 && child.cls === 2) {
+            urls.push(new TextDecoder().decode(derValue(value, child)));
+          } else if (child.constructed) {
+            walk(child);
+          }
+        }
+      };
+      walk(root);
+      return { kind: 'crl', summary: urls.join('\n') };
+    }
+    case '2.5.29.32': {
+      const policies = derChildren(value, root).map((p) => {
+        const oid = readOID(value, derChildren(value, p)[0]);
+        return oidLabel(oid);
+      });
+      return { kind: 'policies', summary: policies.join(', ') };
+    }
+    default:
+      return { kind: 'raw', summary: '0x' + bytesToHex(derValue(value, root)).slice(0, 120) };
+  }
+}
+
+function describePublicKey(bytes, spkiNode) {
+  const [algNode, keyNode] = derChildren(bytes, spkiNode);
+  const algorithm = readAlgorithm(bytes, algNode);
+  const keyBits = derValue(bytes, keyNode);
+  const result = { algorithm: algorithm.name, oid: algorithm.oid };
+
+  if (algorithm.oid === '1.2.840.113549.1.1.1') {
+    // BIT STRING wraps a DER SEQUENCE { modulus, publicExponent }; the first
+    // byte of the BIT STRING is the unused-bit count.
+    const inner = keyBits.subarray(1);
+    const seq = derRead(inner, 0);
+    const [modNode, expNode] = derChildren(inner, seq);
+    const modulus = readInteger(inner, modNode);
+    result.size = modulus.byteLength * 8;
+    result.exponent = readInteger(inner, expNode).value.toString();
+    result.modulusHex = modulus.hex;
+    result.label = 'RSA ' + result.size + '-bit, exponent ' + result.exponent;
+  } else if (algorithm.oid === '1.2.840.10045.2.1') {
+    result.curve = algorithm.paramName || 'unknown curve';
+    result.size = CURVE_BITS[algorithm.paramOID] || (keyBits.length - 2) * 4;
+    result.label = 'EC ' + result.size + '-bit, curve ' + result.curve;
+  } else if (algorithm.oid === '1.3.101.112' || algorithm.oid === '1.3.101.113') {
+    result.size = algorithm.oid === '1.3.101.112' ? 256 : 456;
+    result.label = algorithm.name;
+  } else {
+    result.size = (keyBits.length - 1) * 8;
+    result.label = algorithm.name;
+  }
+  return result;
+}
+
+function parseCertificate(der) {
+  const root = derRead(der, 0);
+  const [tbsNode, sigAlgNode, sigNode] = derChildren(der, root);
+  const tbs = derChildren(der, tbsNode);
+
+  let index = 0;
+  let version = 1;
+  if (tbs[0].cls === 2 && tbs[0].tag === 0) {
+    version = Number(readInteger(der, derChildren(der, tbs[0])[0]).value) + 1;
+    index = 1;
+  }
+  const serial = readInteger(der, tbs[index++]);
+  const innerSigAlg = readAlgorithm(der, tbs[index++]);
+  const issuer = readName(der, tbs[index++]);
+  const validityNode = tbs[index++];
+  const [notBeforeNode, notAfterNode] = derChildren(der, validityNode);
+  const notBefore = readTime(der, notBeforeNode);
+  const notAfter = readTime(der, notAfterNode);
+  const subject = readName(der, tbs[index++]);
+  const publicKey = describePublicKey(der, tbs[index++]);
+
+  const extensions = [];
+  for (; index < tbs.length; index++) {
+    const node = tbs[index];
+    if (node.cls !== 2 || node.tag !== 3) continue;      // [1]/[2] are unique IDs
+    const seq = derChildren(der, node)[0];
+    for (const extNode of derChildren(der, seq)) {
+      const parts = derChildren(der, extNode);
+      const oid = readOID(der, parts[0]);
+      let critical = false;
+      let valueNode = parts[1];
+      if (parts[1].tag === 1) {
+        critical = derValue(der, parts[1])[0] !== 0;
+        valueNode = parts[2];
+      }
+      let decoded;
+      try {
+        decoded = decodeExtension(der, oid, derValue(der, valueNode));
+      } catch (err) {
+        decoded = { kind: 'error', summary: 'could not decode: ' + err.message };
+      }
+      extensions.push({ oid, name: EXT_NAMES[oid] || oid, critical, decoded });
+    }
+  }
+
+  const signature = derValue(der, sigNode);
+  return {
+    version,
+    serialHex: serial.hex.toUpperCase(),
+    serialDecimal: serial.value.toString(),
+    signatureAlgorithm: readAlgorithm(der, sigAlgNode),
+    innerSignatureAlgorithm: innerSigAlg,
+    issuer,
+    subject,
+    notBefore,
+    notAfter,
+    publicKey,
+    extensions,
+    selfIssued: issuer.der === subject.der,
+    signatureBits: (signature.length - 1) * 8,
+    der,
+  };
+}
+
+/* Pulls every PEM block out of a blob of text. A chain file is just several
+   of them end to end, often with human-readable notes in between. */
+function extractPEMBlocks(text) {
+  const blocks = [];
+  const re = /-----BEGIN ([A-Z0-9 ]+)-----([\s\S]*?)-----END \1-----/g;
+  let match;
+  while ((match = re.exec(text)) !== null) {
+    blocks.push({ label: match[1], body: match[2].replace(/\s+/g, '') });
+  }
+  return blocks;
+}
+
+function base64ToBytes(b64) {
+  const clean = b64.replace(/\s+/g, '');
+  if (!/^[A-Za-z0-9+/]*={0,2}$/.test(clean)) throw new Error('not valid base64');
+  const binary = atob(clean);
+  const out = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) out[i] = binary.charCodeAt(i);
+  return out;
+}
+
+/* Accepts PEM text, or raw DER bytes when a file was dropped. */
+function loadCertificates(input) {
+  const certs = [];
+  const errors = [];
+  if (input instanceof Uint8Array) {
+    // A DER file starts with SEQUENCE (0x30); anything else is treated as text.
+    if (input[0] === 0x30) {
+      certs.push(input);
+      return { certs, errors };
+    }
+    input = new TextDecoder('utf-8').decode(input);
+  }
+  const blocks = extractPEMBlocks(input);
+  if (!blocks.length) {
+    const stripped = String(input).replace(/\s+/g, '');
+    if (stripped && /^[A-Za-z0-9+/]+={0,2}$/.test(stripped)) {
+      // Bare base64 with the armour lines missing. Ordinary prose can also be
+      // valid base64 ("hellothere" is), so the result has to actually look
+      // like DER before it is offered to the parser.
+      try {
+        const decoded = base64ToBytes(stripped);
+        if (decoded[0] !== 0x30) {
+          return { certs, errors: ['That does not look like a certificate — a DER ' +
+                                   'certificate starts with an ASN.1 SEQUENCE (0x30).'] };
+        }
+        certs.push(decoded);
+      } catch (err) {
+        errors.push(err.message);
+      }
+      return { certs, errors };
+    }
+    return { certs, errors: ['No PEM block found. Expected -----BEGIN CERTIFICATE-----.'] };
+  }
+  blocks.forEach((block, i) => {
+    if (block.label.indexOf('PRIVATE KEY') !== -1) {
+      errors.push('Block ' + (i + 1) + ' is a private key — skipped, and you should not paste ' +
+                  'one anywhere. Only the certificate is needed.');
+      return;
+    }
+    if (block.label !== 'CERTIFICATE' && block.label !== 'X509 CERTIFICATE' &&
+        block.label !== 'TRUSTED CERTIFICATE') {
+      errors.push('Block ' + (i + 1) + ' is a ' + block.label + ', not a certificate — skipped.');
+      return;
+    }
+    try {
+      certs.push(base64ToBytes(block.body));
+    } catch (err) {
+      errors.push('Block ' + (i + 1) + ': ' + err.message);
+    }
+  });
+  return { certs, errors };
+}
+
+async function fingerprint(der, algorithm) {
+  const digest = await crypto.subtle.digest(algorithm, der);
+  return bytesToHex(new Uint8Array(digest), ':').toUpperCase();
+}
+
+/* Chain order per RFC 5246: each certificate must be issued by the next one. */
+function analyseChain(certs) {
+  const notes = [];
+  for (let i = 0; i < certs.length - 1; i++) {
+    if (certs[i].issuer.der !== certs[i + 1].subject.der) {
+      notes.push('Certificate ' + (i + 1) + ' is not issued by certificate ' + (i + 2) +
+                 ' — the chain is out of order or a link is missing.');
+    }
+  }
+  const last = certs[certs.length - 1];
+  if (last && last.selfIssued) {
+    notes.push('The chain ends at a self-signed root. Servers normally omit the root, since ' +
+               'the client already has it.');
+  }
+  return notes;
+}
+
+function daysBetween(a, b) { return Math.floor((b - a) / 86400000); }
+
+function validityState(cert, now) {
+  if (now < cert.notBefore.epoch) {
+    return { state: 'future', label: 'Not valid yet — starts in ' +
+             daysBetween(now, cert.notBefore.epoch) + ' days' };
+  }
+  if (now > cert.notAfter.epoch) {
+    return { state: 'expired', label: 'EXPIRED ' + daysBetween(cert.notAfter.epoch, now) +
+             ' days ago' };
+  }
+  const left = daysBetween(now, cert.notAfter.epoch);
+  return {
+    state: left <= 14 ? 'soon' : 'valid',
+    label: 'Valid — ' + left + ' day' + (left === 1 ? '' : 's') + ' left',
+    daysLeft: left,
+  };
+}
+
+/* ==== UI ==== */
+
+const $ = (id) => document.getElementById(id);
+
+function show(el, text) { el.textContent = text; el.style.display = text ? 'block' : 'none'; }
+
+function fmtDate(time) {
+  return new Date(time.epoch).toISOString().replace('T', ' ').replace('.000Z', ' UTC');
+}
+
+function row(table, label, value, className) {
+  const tr = table.insertRow();
+  const th = document.createElement('th');
+  th.textContent = label;
+  tr.append(th);
+  const td = tr.insertCell();
+  td.textContent = value;
+  if (className) td.className = className;
+  return td;
+}
+
+async function renderCertificate(cert, index, total) {
+  const box = document.createElement('section');
+  box.className = 'cert-card';
+
+  const head = document.createElement('div');
+  head.className = 'cert-head';
+  const title = document.createElement('h2');
+  const cn = cert.subject.attributes.find((a) => a.name === 'CN');
+  title.textContent = (total > 1 ? (index + 1) + '. ' : '') +
+                      (cn ? cn.value : cert.subject.text || '(no subject)');
+  head.append(title);
+
+  const state = validityState(cert, Date.now());
+  const badge = document.createElement('span');
+  badge.className = 'cert-badge ' + state.state;
+  badge.textContent = state.label;
+  head.append(badge);
+
+  const isCA = cert.extensions.some(
+    (e) => e.oid === '2.5.29.19' && e.decoded.ca);
+  const role = document.createElement('span');
+  role.className = 'cert-badge role';
+  role.textContent = isCA ? (cert.selfIssued ? 'Root CA' : 'Intermediate CA') : 'End-entity';
+  head.append(role);
+  box.append(head);
+
+  const table = document.createElement('table');
+  table.className = 'cert-table';
+  row(table, 'Subject', cert.subject.text || '(empty)');
+  row(table, 'Issuer', cert.issuer.text || '(empty)');
+  row(table, 'Valid from', fmtDate(cert.notBefore));
+  row(table, 'Valid to', fmtDate(cert.notAfter), state.state === 'expired' ? 'bad' : '');
+  row(table, 'Lifetime', daysBetween(cert.notBefore.epoch, cert.notAfter.epoch) + ' days');
+  row(table, 'Serial', cert.serialHex + '  (' + cert.serialDecimal + ')');
+  row(table, 'Version', 'v' + cert.version);
+  row(table, 'Public key', cert.publicKey.label);
+  row(table, 'Signature', cert.signatureAlgorithm.name + ', ' + cert.signatureBits + '-bit');
+  if (cert.signatureAlgorithm.oid !== cert.innerSignatureAlgorithm.oid) {
+    row(table, 'Warning',
+        'The outer and inner signature algorithms disagree — the certificate is malformed.',
+        'bad');
+  }
+  box.append(table);
+
+  const sans = cert.extensions.find((e) => e.oid === '2.5.29.17');
+  if (sans) {
+    const wrap = document.createElement('div');
+    const label = document.createElement('div');
+    label.className = 'cert-section-label';
+    label.textContent = 'Subject Alternative Names (' + sans.decoded.names.length + ')';
+    wrap.append(label);
+    const list = document.createElement('div');
+    list.className = 'san-list';
+    for (const name of sans.decoded.names) {
+      const chip = document.createElement('span');
+      chip.className = 'san-chip';
+      chip.textContent = name.kind + ': ' + name.value;
+      list.append(chip);
+    }
+    wrap.append(list);
+    box.append(wrap);
+  }
+
+  const extLabel = document.createElement('div');
+  extLabel.className = 'cert-section-label';
+  extLabel.textContent = 'Extensions (' + cert.extensions.length + ')';
+  box.append(extLabel);
+
+  const extTable = document.createElement('table');
+  extTable.className = 'cert-table';
+  for (const ext of cert.extensions) {
+    if (ext.oid === '2.5.29.17') continue;             // already shown above
+    row(extTable, ext.name + (ext.critical ? ' *' : ''), ext.decoded.summary || '(empty)');
+  }
+  box.append(extTable);
+  const critNote = document.createElement('p');
+  critNote.className = 'tool-note';
+  critNote.textContent = '* marks a critical extension — a client that does not understand one ' +
+                         'must reject the certificate.';
+  box.append(critNote);
+
+  const fpTable = document.createElement('table');
+  fpTable.className = 'cert-table';
+  row(fpTable, 'SHA-256', await fingerprint(cert.der, 'SHA-256'));
+  row(fpTable, 'SHA-1', await fingerprint(cert.der, 'SHA-1'));
+  box.append(fpTable);
+
+  return box;
+}
+
+async function render() {
+  const out = $('cert-output');
+  out.textContent = '';
+  show($('chain-summary'), '');
+  const text = $('pem-input').value;
+  if (!text.trim()) { show($('parse-error'), ''); return; }
+
+  const loaded = loadCertificates(text);
+  const parsed = [];
+  const errors = loaded.errors.slice();
+  loaded.certs.forEach((der, i) => {
+    try {
+      parsed.push(parseCertificate(der));
+    } catch (err) {
+      errors.push('Certificate ' + (i + 1) + ': ' + err.message);
+    }
+  });
+  show($('parse-error'), errors.join('\n'));
+  if (!parsed.length) return;
+
+  const notes = analyseChain(parsed);
+  show($('chain-summary'),
+       parsed.length + ' certificate' + (parsed.length === 1 ? '' : 's') + ' decoded.' +
+       (notes.length ? '  ' + notes.join('  ') : parsed.length > 1 ? '  Chain order looks correct.' : ''));
+
+  for (let i = 0; i < parsed.length; i++) {
+    out.append(await renderCertificate(parsed[i], i, parsed.length));
+  }
+}
+
+$('pem-input').addEventListener('input', render);
+$('clear-btn').addEventListener('click', () => {
+  $('pem-input').value = '';
+  render();
+  $('pem-input').focus();
+});
+$('file-input').addEventListener('change', async (event) => {
+  const file = event.target.files[0];
+  if (!file) return;
+  const buffer = new Uint8Array(await file.arrayBuffer());
+  if (buffer[0] === 0x30) {
+    // Raw DER — re-armour it so the textarea shows something meaningful.
+    let binary = '';
+    for (const byte of buffer) binary += String.fromCharCode(byte);
+    const b64 = btoa(binary).replace(/(.{64})/g, '$1\n');
+    $('pem-input').value = '-----BEGIN CERTIFICATE-----\n' + b64 + '\n-----END CERTIFICATE-----\n';
+  } else {
+    $('pem-input').value = new TextDecoder().decode(buffer);
+  }
+  render();
+});
+
+const SAMPLE = `-----BEGIN CERTIFICATE-----
+MIIEeTCCA2GgAwIBAgIUcHj6h8GFc2mSmc+0MxorDjnfeIswDQYJKoZIhvcNAQEL
+BQAwgYgxCzAJBgNVBAYTAkdCMRswGQYDVQQIDBJHcmVhdGVyIE1hbmNoZXN0ZXIx
+EDAOBgNVBAcMB1NhbGZvcmQxFDASBgNVBAoMC1NsaXBweSBMYWJzMRowGAYDVQQL
+DBFXb3Jrc2hvcCBEaXZpc2lvbjEYMBYGA1UEAwwPd3d3LmV4YW1wbGUuY29tMB4X
+DTI2MDgyMTEwNTMyNFoXDTI4MTEyMzEwNTMyNFowgYgxCzAJBgNVBAYTAkdCMRsw
+GQYDVQQIDBJHcmVhdGVyIE1hbmNoZXN0ZXIxEDAOBgNVBAcMB1NhbGZvcmQxFDAS
+BgNVBAoMC1NsaXBweSBMYWJzMRowGAYDVQQLDBFXb3Jrc2hvcCBEaXZpc2lvbjEY
+MBYGA1UEAwwPd3d3LmV4YW1wbGUuY29tMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8A
+MIIBCgKCAQEAym00234YOsWiytkqfjkBRPV22+sLhgDm2or8UDAfsqCcxQ9D0gpk
+gajAWnZ+hEZn9I1gadjYsRNS2fY2mUSqZB11brxMQc5m4eUk0kPhbKrDKCpufgnS
+raP+sCC1WNw2eGKvBmVjDJvdRi4vJ59LzEukJ85X/95morlodMqRHS+zwXgVRntQ
+YIaiDqkBgC6QBXwLEKsvtd+p+pekSoK9hOdsyEEi0ICt2kESPxxiCTd191QEdYJQ
+5822hMAUeviZO9xJbdZ2wqecK7fbiUjb5EpyAjp5pOMo7DjHfVEg7jRgC6X8/Zu+
+g2pFUY10KF2e5YA654TzhPUio9kXFJ0qiQIDAQABo4HYMIHVMHcGA1UdEQRwMG6C
+D3d3dy5leGFtcGxlLmNvbYILZXhhbXBsZS5jb22CDSouZXhhbXBsZS5jb22HBMAA
+AgqHECABDbgAAAAAAAAAAAAAAAGBEWFkbWluQGV4YW1wbGUuY29thhRodHRwczov
+L2V4YW1wbGUuY29tLzAMBgNVHRMBAf8EAjAAMA4GA1UdDwEB/wQEAwIFoDAdBgNV
+HSUEFjAUBggrBgEFBQcDAQYIKwYBBQUHAwIwHQYDVR0OBBYEFO/NFlE8zPkBzXkd
+OlyvodRCgS0JMA0GCSqGSIb3DQEBCwUAA4IBAQBdYbTE7S4AqYYB/PdPAiaqOTWc
+ud5YlFxoeFThhjqwdivHv89+HVF6LgbEC/21AbNkNRmiEPTfI8vCdT98CGWyrzSO
+v6pkVD3M93KaaD++/oIhufRCyIQMQyX+YvSM5pQHnWrRX6dA9jfiriRDIxwU8gJ0
+p1URdemQd4fdspPQO1+Ggg6NINJRXdB+bBeeTfZN39qaObT/RtKv3SN1plVQkMwc
+X5+DXx6m3Y2ctyI9wL/LBMKnJQxq91ROFYwUp5e1sAfN1WPBBl4POL1WKDqCzmtY
+qc6ZkTe4OC3yDYLGaFzDAUFNR5NCClsmsAbyer2svoSaNQmb6yeyQOiS+afx
+-----END CERTIFICATE-----`;
+
+$('sample-btn').addEventListener('click', () => {
+  $('pem-input').value = SAMPLE;
+  render();
+});
+
+$('pem-input').value = SAMPLE;
+render();
+</script>
+</body>
+</html>
